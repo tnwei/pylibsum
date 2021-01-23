@@ -1,10 +1,13 @@
+#!/usr/bin/env python3
 import ast
 from typing import List, Dict
 from collections import OrderedDict
+from pathlib import Path
+from pprint import pprint
 
 # From https://docs.python.org/3/library/functions.html
 # No idea how this changed over time
-builtin_functions: List[str] = [
+BUILTINS: List[str] = [
     "abs",
     "all",
     "any",
@@ -76,11 +79,28 @@ builtin_functions: List[str] = [
     "__import__",
 ]
 
+# Literals referred from https://greentreesnakes.readthedocs.io/en/latest/nodes.html#literals
+AST_LITERALS = (
+    ast.Constant,
+    ast.Str,
+    ast.Num,
+    ast.Str,
+    ast.FormattedValue,
+    ast.JoinedStr,
+    ast.Bytes,
+    ast.List,
+    ast.Tuple,
+    ast.Set,
+    ast.Dict,
+    ast.Ellipsis,
+    ast.NameConstant,
+)
+
 
 class ImportTracker(ast.NodeVisitor):
     def __init__(self):
         super().__init__()
-        self.libs: Dict[str] = {}
+        self.libs: Dict[str, str] = {}
 
     def visit_Import(self, node):
         """
@@ -114,10 +134,11 @@ class ImportTracker(ast.NodeVisitor):
                 if name != "*":
                     self.libs[name] = node.module
                 else:
-                    print(f"Warning: `from {node.module} import *` detected!")
+                    print(f"Warning: wild card import found involving: `{node.module}`")
                     self.libs[name] = "unknown"
             else:
-                self.libs[asname] = {name: node.module}
+                self.libs[asname] = name
+                self.libs[name] = node.module
 
         # Call self.generic_visit(node) to include child nodes
         self.generic_visit(node)
@@ -178,24 +199,8 @@ class CallTracker(ast.NodeVisitor):
                 current_layer = current_layer.left
             elif isinstance(
                 current_layer,
-                (
-                    ast.Constant,
-                    ast.Str,
-                    ast.Num,
-                    ast.Str,
-                    ast.FormattedValue,
-                    ast.JoinedStr,
-                    ast.Bytes,
-                    ast.List,
-                    ast.Tuple,
-                    ast.Set,
-                    ast.Dict,
-                    ast.Ellipsis,
-                    ast.NameConstant,
-                ),
+                AST_LITERALS,
             ):
-                # Literals, any function from these are builtins I believe?
-                # Literals referred from https://greentreesnakes.readthedocs.io/en/latest/nodes.html#literals
                 return "builtin"
             else:
                 print(ast.dump(current_layer))
@@ -214,6 +219,8 @@ class AssignTracker(ast.NodeVisitor):
         # assert isinstance(node.value, ast.Call), f"{ast.dump(node.value)}"
 
         for i in node.targets:
+            # A bit tedious here as mapping out the source library for each
+            # value assignment isn't straightforward
             if isinstance(i, ast.Name):
                 name = i.id
             elif isinstance(i, ast.Attribute):
@@ -225,14 +232,28 @@ class AssignTracker(ast.NodeVisitor):
                 # Usually these are numbers, but pathlib.Path() for example
                 # overloads division to concat subdirectories
                 continue
+            elif isinstance(i, AST_LITERALS):
+                # Nothing worth tracking if they're literals I think?
+                # The sequence literals that can take any valid Python object
+                # are near impossible to track here
+                continue
             else:
                 # TODO: Map out other conditional branches and remove this
                 print(type(i))
                 raise Exception
 
             if isinstance(node.value, ast.Call):
-                # If it's a function call, track the origin of the function
-                self.assigns[name] = self.find_top_lvl_name(node.value.func)
+                # If it's a function call, track the origin of the assigned object
+                traced_origin = self.find_top_lvl_name(node.value.func)
+
+                if name == traced_origin:
+                    # The origin couldn't be determined
+                    # Refrain from creating self-referential loop
+                    pass
+                else:
+                    # Record the origin of the assigned object
+                    self.assigns[name] = traced_origin
+
             else:
                 # If it isn't, try and find out the origin
                 # TODO: Find the origin of the variables assigned
@@ -261,24 +282,8 @@ class AssignTracker(ast.NodeVisitor):
                 current_layer = current_layer.left
             elif isinstance(
                 current_layer,
-                (
-                    ast.Constant,
-                    ast.Str,
-                    ast.Num,
-                    ast.Str,
-                    ast.FormattedValue,
-                    ast.JoinedStr,
-                    ast.Bytes,
-                    ast.List,
-                    ast.Tuple,
-                    ast.Set,
-                    ast.Dict,
-                    ast.Ellipsis,
-                    ast.NameConstant,
-                ),
+                AST_LITERALS,
             ):
-                # Literals, any function from these are builtins I believe?
-                # Literals referred from https://greentreesnakes.readthedocs.io/en/latest/nodes.html#literals
                 return "builtin"
             else:
                 print(ast.dump(current_layer))
@@ -313,12 +318,19 @@ def count_libs(text, return_percent=True):
         # If it is an object, lookup to see if can assign the object to a library
         if i in obj.assigns.keys():
             j = i
-            while True:
+            for _ in range(30):
+                # Probably no such thing that is nested 30 layers deep?
+                # Danger of a circular reference here
                 if j in obj.assigns.keys():
                     j = obj.assigns.get(j)
                 else:
+                    i = j
                     break
-            i = j
+            else:
+                # If we exceed 30 loops, we probably have a circular reference
+                print(f"Warning: Circular reference for {i}, assigning as unknown")
+                final_count["unknown"] += 1
+                continue
 
         # If it is a function, and is defined in code
         if i in obj.functiondefs:
@@ -329,15 +341,20 @@ def count_libs(text, return_percent=True):
             final_count[obj.libs.get(i)] += 1
 
         # If it is one of the builtins
-        elif i in builtin_functions:
+        elif i in BUILTINS:
             final_count["builtin"] += 1
 
         # Else, cannot trace lineage of function
         else:
             final_count["unknown"] += 1
 
+    total_calls = sum(final_count.values())
+
+    if total_calls == 0:
+        print("\tNo functions called")
+        return {}
+
     if return_percent is True:
-        total_calls = sum(final_count.values())
         final_count = {i: (j * 100 / total_calls) for i, j in final_count.items()}
 
     return final_count
@@ -350,11 +367,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Show proportion of functions called by library"
     )
-    parser.add_argument("path", nargs="?", help="Path to file to inspect", default=None)
+    parser.add_argument(
+        "path", nargs="*", help="Path to file / folders to inspect", default=None
+    )
 
     args = parser.parse_args()
 
-    if args.path is None:
+    if len(args.path) == 0:
         print("Call signature: `python pylibsum.py <INSERT FILENAME>`")
         print("Example: Given contents of example.py below:")
         text = """
@@ -372,27 +391,46 @@ scipy.linalg.svd(a)"""
         print()
         print("Outcome of running `python pylibsum.py example.py`:")
         print()
+        print("example.py")
+        print()
         res = count_libs(text)
         sorted_res = OrderedDict(
             {i: j for i, j in sorted(res.items(), key=lambda x: x[1], reverse=True)}
         )
         for i, j in sorted_res.items():
-            print(f"{i}: {j:.2f} %")
-        sys.exit()
+            print(f"\t{i}: {j:.2f} %")
+
+        print()
+
+    # Contains output
     else:
-        fn = args.path
+        fnames = []
 
-    with open(fn, "r") as f:
-        text = f.read()
+        for i in args.path:
+            fp = Path(i)
+            if fp.is_dir():
+                fnames.extend(list(Path(i).glob("*/*.py")))
+            elif fp.suffix == ".py":
+                fnames.append(fp)
+            else:
+                pass
 
-    # Nice thing w/ AST is that it ignores comments!
-    # The below do not show up
-    # import antigravity
-    # print(astpp.dump(ast.parse(text)))
-    # print()
-    res = count_libs(text)
-    sorted_res = OrderedDict(
-        {i: j for i, j in sorted(res.items(), key=lambda x: x[1], reverse=True)}
-    )
-    for i, j in sorted_res.items():
-        print(f"{i}: {j:.2f} %")
+        for fn in fnames:
+            print(fn)
+            print()
+            with open(fn, "r") as f:
+                text = f.read()
+
+            # Nice thing w/ AST is that it ignores comments!
+            # The below do not show up
+            # import antigravity
+            # print(astpp.dump(ast.parse(text)))
+            # print()
+            res = count_libs(text)
+            sorted_res = OrderedDict(
+                {i: j for i, j in sorted(res.items(), key=lambda x: x[1], reverse=True)}
+            )
+            for i, j in sorted_res.items():
+                print(f"\t{i}: {j:.2f} %")
+
+            print()
