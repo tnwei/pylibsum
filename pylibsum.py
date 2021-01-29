@@ -4,6 +4,9 @@ from typing import List, Dict
 from collections import OrderedDict
 from pathlib import Path
 from pprint import pprint
+import sys
+import argparse
+
 
 # From https://docs.python.org/3/library/functions.html
 # No idea how this changed over time
@@ -135,7 +138,7 @@ class ImportTracker(ast.NodeVisitor):
                     self.libs[name] = node.module
                 else:
                     print(f"Warning: wild card import found involving: `{node.module}`")
-                    self.libs[name] = "unknown"
+                    self.libs[name] = "<unknown>"
             else:
                 self.libs[asname] = name
                 self.libs[name] = node.module
@@ -201,10 +204,11 @@ class CallTracker(ast.NodeVisitor):
                 current_layer,
                 AST_LITERALS,
             ):
-                return "builtin"
+                return "<built-in>"
             else:
-                print(ast.dump(current_layer))
-                raise Exception
+                # print(ast.dump(current_layer))
+                # raise Exception
+                return "<unknown>"
 
 
 class AssignTracker(ast.NodeVisitor):
@@ -238,9 +242,10 @@ class AssignTracker(ast.NodeVisitor):
                 # are near impossible to track here
                 continue
             else:
-                # TODO: Map out other conditional branches and remove this
-                print(type(i))
-                raise Exception
+                # TODO: Map out other conditional branches and remove this           continue
+                # print(type(i))
+                # raise Exception
+                continue
 
             if isinstance(node.value, ast.Call):
                 # If it's a function call, track the origin of the assigned object
@@ -284,15 +289,18 @@ class AssignTracker(ast.NodeVisitor):
                 current_layer,
                 AST_LITERALS,
             ):
-                return "builtin"
+                return "<built-in>"
             else:
-                print(ast.dump(current_layer))
-                raise Exception
+                # print(ast.dump(current_layer))
+                # raise Exception
+                return "<unknown>"
 
 
 class LibSum(
     ImportTracker, FunctionDefTracker, CallTracker, AssignTracker, ast.NodeVisitor
 ):
+    # Lumping this here, so that each component is in its own class
+    # TODO: Clean up
     pass
 
 
@@ -309,9 +317,9 @@ def count_libs(text, return_percent=True):
 
     # Pre-populate
     final_count: Dict[int] = {i: 0 for i in obj.libs.values()}
-    final_count["user-defined"] = 0
-    final_count["unknown"] = 0
-    final_count["builtin"] = 0
+    final_count["<user-defined>"] = 0
+    final_count["<unknown>"] = 0
+    final_count["<built-in>"] = 0
 
     # For the associated item in the list
     for i in obj.calls:
@@ -329,12 +337,12 @@ def count_libs(text, return_percent=True):
             else:
                 # If we exceed 30 loops, we probably have a circular reference
                 print(f"Warning: Circular reference for {i}, assigning as unknown")
-                final_count["unknown"] += 1
+                final_count["<unknown>"] += 1
                 continue
 
         # If it is a function, and is defined in code
         if i in obj.functiondefs:
-            final_count["user-defined"] += 1
+            final_count["<user-defined>"] += 1
 
         # If it is a function, and can be directly traced to one of the libraries
         elif i in obj.libs.keys():
@@ -342,11 +350,11 @@ def count_libs(text, return_percent=True):
 
         # If it is one of the builtins
         elif i in BUILTINS:
-            final_count["builtin"] += 1
+            final_count["<built-in>"] += 1
 
         # Else, cannot trace lineage of function
         else:
-            final_count["unknown"] += 1
+            final_count["<unknown>"] += 1
 
     total_calls = sum(final_count.values())
 
@@ -360,22 +368,24 @@ def count_libs(text, return_percent=True):
     return final_count
 
 
-if __name__ == "__main__":
-    import sys
-    import argparse
-
+def main():
+    ## Arugment handling
     parser = argparse.ArgumentParser(
-        description="Show proportion of functions called by library"
+        description="Summarizes libraries used in a Python script/repo"
     )
     parser.add_argument(
         "path", nargs="*", help="Path to file / folders to inspect", default=None
     )
+    parser.add_argument(
+        "-l", "--long", help="Shows results on individual file basis, else sums across files", action="store_true")
 
     args = parser.parse_args()
 
+
+    # If we have no dir names passed, display a meaningful example
     if len(args.path) == 0:
-        print("Call signature: `python pylibsum.py <INSERT FILENAME>`")
-        print("Example: Given contents of example.py below:")
+        print("Call signature: `pylibsum <INSERT DIRNAME>`")
+        print("Example: Given contents of sample.py below:")
         text = """
 import numpy as np
 from plotnine import *
@@ -389,11 +399,16 @@ isinstance(10, list)
 scipy.linalg.svd(a)"""
         print("\n\t| ".join(text.split("\n")))
         print()
-        print("Outcome of running `python pylibsum.py example.py`:")
+        print("Outcome of running `pylibsum sample.py`:")
         print()
-        print("example.py")
+        print("sample.py")
         print()
+
+        # This line does the heavy lifting
         res = count_libs(text)
+
+        # These lines sort libraries by descending order
+        # and prints them
         sorted_res = OrderedDict(
             {i: j for i, j in sorted(res.items(), key=lambda x: x[1], reverse=True)}
         )
@@ -402,8 +417,9 @@ scipy.linalg.svd(a)"""
 
         print()
 
-    # Contains output
+    # We have args passed
     else:
+        # Vet to only include Python scripts
         fnames = []
 
         for i in args.path:
@@ -415,22 +431,64 @@ scipy.linalg.svd(a)"""
             else:
                 pass
 
+        file_libs = {}
+
+        # Run counts for each file
         for fn in fnames:
-            print(fn)
-            print()
             with open(fn, "r") as f:
                 text = f.read()
+            file_libs[fn] = count_libs(text)
 
-            # Nice thing w/ AST is that it ignores comments!
-            # The below do not show up
-            # import antigravity
-            # print(astpp.dump(ast.parse(text)))
-            # print()
-            res = count_libs(text)
+        # If aggregating (default behaviour)
+        if args.long is False:
+            # Need to collate counts
+            agg_libs = {}
+
+            # Iterate across all stored counts
+            for _, file_lib in file_libs.items():
+                for lib, count in file_lib.items():
+                    if lib not in agg_libs.keys():
+                        # Add to aggregate dict if lib not recorded
+                        agg_libs[lib] = count
+                    else:
+                        # Add to existing count if lib is recorded
+                        agg_libs[lib] += count
+
+            # Sort by descending count
             sorted_res = OrderedDict(
-                {i: j for i, j in sorted(res.items(), key=lambda x: x[1], reverse=True)}
+                {i: j for i, j in sorted(agg_libs.items(), key=lambda x: x[1], reverse=True)}
             )
-            for i, j in sorted_res.items():
-                print(f"\t{i}: {j:.2f} %")
 
+            # Print to stdout
+            for i, j in sorted_res.items():
+                print(f"{i}: {j:.2f} %")
+
+            # Leave a blank line as courtesy
             print()
+
+        # If not aggregating, and reporting by file
+        else:
+            # Iterate for each file
+            for fn, file_lib in file_libs.items():
+                # Print the file name
+                print(fn)
+                print()
+
+            # Sort by descending count
+            sorted_res = OrderedDict(
+                {i: j for i, j in sorted(file_libs.items(), key=lambda x: x[1], reverse=True)}
+            )
+
+            # Print to std out
+            for i, j in sorted_res.items():
+                print(f"{i}: {j:.2f} %")
+
+            # Leave a blank line as courtesy
+            print()
+
+        # Exit when done with loop 
+        sys.exit()
+
+
+if __name__ == "__main__":
+    main()
