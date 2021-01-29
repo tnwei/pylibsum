@@ -304,7 +304,7 @@ class LibSum(
     pass
 
 
-def count_libs(text, return_percent=True):
+def count_libs(text):
     tree: ast.Module = ast.parse(text)
     obj: LibSum = LibSum()
     obj.visit(tree)
@@ -359,11 +359,9 @@ def count_libs(text, return_percent=True):
     total_calls = sum(final_count.values())
 
     if total_calls == 0:
-        print("\tNo functions called")
+        # print("No functions called")
         return {}
 
-    if return_percent is True:
-        final_count = {i: (j * 100 / total_calls) for i, j in final_count.items()}
 
     return final_count
 
@@ -401,8 +399,6 @@ scipy.linalg.svd(a)"""
         print()
         print("Outcome of running `pylibsum sample.py`:")
         print()
-        print("sample.py")
-        print()
 
         # This line does the heavy lifting
         res = count_libs(text)
@@ -412,8 +408,11 @@ scipy.linalg.svd(a)"""
         sorted_res = OrderedDict(
             {i: j for i, j in sorted(res.items(), key=lambda x: x[1], reverse=True)}
         )
-        for i, j in sorted_res.items():
-            print(f"\t{i}: {j:.2f} %")
+
+        total_calls = sum(sorted_res.values())
+        final_count = {i: (j * 100 / total_calls) for i, j in sorted_res.items()}
+        for i, j in final_count.items():
+            print(f"{i}: {j:.2f} %")
 
         print()
 
@@ -425,7 +424,9 @@ scipy.linalg.svd(a)"""
         for i in args.path:
             fp = Path(i)
             if fp.is_dir():
-                fnames.extend(list(Path(i).glob("*/*.py")))
+                # Include *.py, *.pyi files
+                fnames.extend(list(fp.glob("*.py")))
+                fnames.extend(list(fp.glob("*.pyi")))
             elif fp.suffix == ".py":
                 fnames.append(fp)
             else:
@@ -458,9 +459,11 @@ scipy.linalg.svd(a)"""
             sorted_res = OrderedDict(
                 {i: j for i, j in sorted(agg_libs.items(), key=lambda x: x[1], reverse=True)}
             )
+            total_calls = sum(sorted_res.values())
+            final_count = {i: (j * 100 / total_calls) for i, j in sorted_res.items()}
 
             # Print to stdout
-            for i, j in sorted_res.items():
+            for i, j in final_count.items():
                 print(f"{i}: {j:.2f} %")
 
             # Leave a blank line as courtesy
@@ -474,17 +477,19 @@ scipy.linalg.svd(a)"""
                 print(fn)
                 print()
 
-            # Sort by descending count
-            sorted_res = OrderedDict(
-                {i: j for i, j in sorted(file_libs.items(), key=lambda x: x[1], reverse=True)}
-            )
+                # Sort by descending count
+                sorted_res = OrderedDict(
+                    {i: j for i, j in sorted(file_lib.items(), key=lambda x: x[1], reverse=True)}
+                )
+                total_calls = sum(sorted_res.values())
+                final_count = {i: (j * 100 / total_calls) for i, j in sorted_res.items()}
 
-            # Print to std out
-            for i, j in sorted_res.items():
-                print(f"{i}: {j:.2f} %")
+                # Print to std out
+                for i, j in final_count.items():
+                    print(f"{i}: {j:.2f} %")
 
-            # Leave a blank line as courtesy
-            print()
+                # Leave a blank line as courtesy
+                print()
 
         # Exit when done with loop 
         sys.exit()
