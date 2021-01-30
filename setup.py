@@ -1,6 +1,6 @@
 import setuptools
 
-with open('README.md', "r") as f:
+with open("README.md", "r") as f:
     long_description = f.read()
 
 setuptools.setup(
@@ -20,8 +20,6 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
-    entry_points={
-        "console_scripts": ["pylibsum = pylibsum:main"]
-    }
+    python_requires=">=3.6",
+    entry_points={"console_scripts": ["pylibsum = pylibsum:main"]},
 )

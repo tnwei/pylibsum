@@ -200,10 +200,7 @@ class CallTracker(ast.NodeVisitor):
             elif isinstance(current_layer, ast.BinOp):
                 # Choose left as a guess by human writing convention
                 current_layer = current_layer.left
-            elif isinstance(
-                current_layer,
-                AST_LITERALS,
-            ):
+            elif isinstance(current_layer, AST_LITERALS):
                 return "<built-in>"
             else:
                 # print(ast.dump(current_layer))
@@ -285,10 +282,7 @@ class AssignTracker(ast.NodeVisitor):
             elif isinstance(current_layer, ast.BinOp):
                 # Choose left as a guess by human writing convention
                 current_layer = current_layer.left
-            elif isinstance(
-                current_layer,
-                AST_LITERALS,
-            ):
+            elif isinstance(current_layer, AST_LITERALS):
                 return "<built-in>"
             else:
                 # print(ast.dump(current_layer))
@@ -362,7 +356,6 @@ def count_libs(text):
         # print("No functions called")
         return {}
 
-
     return final_count
 
 
@@ -375,10 +368,13 @@ def main():
         "path", nargs="*", help="Path to file / folders to inspect", default=None
     )
     parser.add_argument(
-        "-l", "--long", help="Shows results on individual file basis, else sums across files", action="store_true")
+        "-l",
+        "--long",
+        help="Shows results on individual file basis, else sums across files",
+        action="store_true",
+    )
 
     args = parser.parse_args()
-
 
     # If we have no dir names passed, display a meaningful example
     if len(args.path) == 0:
@@ -457,7 +453,12 @@ scipy.linalg.svd(a)"""
 
             # Sort by descending count
             sorted_res = OrderedDict(
-                {i: j for i, j in sorted(agg_libs.items(), key=lambda x: x[1], reverse=True)}
+                {
+                    i: j
+                    for i, j in sorted(
+                        agg_libs.items(), key=lambda x: x[1], reverse=True
+                    )
+                }
             )
             total_calls = sum(sorted_res.values())
             final_count = {i: (j * 100 / total_calls) for i, j in sorted_res.items()}
@@ -479,10 +480,17 @@ scipy.linalg.svd(a)"""
 
                 # Sort by descending count
                 sorted_res = OrderedDict(
-                    {i: j for i, j in sorted(file_lib.items(), key=lambda x: x[1], reverse=True)}
+                    {
+                        i: j
+                        for i, j in sorted(
+                            file_lib.items(), key=lambda x: x[1], reverse=True
+                        )
+                    }
                 )
                 total_calls = sum(sorted_res.values())
-                final_count = {i: (j * 100 / total_calls) for i, j in sorted_res.items()}
+                final_count = {
+                    i: (j * 100 / total_calls) for i, j in sorted_res.items()
+                }
 
                 # Print to std out
                 for i, j in final_count.items():
@@ -491,7 +499,7 @@ scipy.linalg.svd(a)"""
                 # Leave a blank line as courtesy
                 print()
 
-        # Exit when done with loop 
+        # Exit when done with loop
         sys.exit()
 
 
